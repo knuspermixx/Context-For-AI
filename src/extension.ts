@@ -20,7 +20,7 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
 
   private rootPath: string;
   private checkedItems: Set<string> = new Set();
-  private excludedPaths: Set<string> = new Set([
+  private initiallyExcludedPaths: Set<string> = new Set([
     'node_modules',
     '.env',
     '.git',
@@ -42,7 +42,7 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
       const stat = fs.statSync(filePath);
       const relativePath = path.relative(this.rootPath, filePath);
 
-      if (!this.shouldExclude(relativePath)) {
+      if (!this.isInitiallyExcludedPath(relativePath)) {
         this.checkedItems.add(filePath);
         if (stat.isDirectory()) {
           this.initializeCheckedItems(filePath);
@@ -51,8 +51,8 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
     });
   }
 
-  private shouldExclude(relativePath: string): boolean {
-    return this.excludedPaths.has(relativePath.split(path.sep)[0]);
+  private isInitiallyExcludedPath(relativePath: string): boolean {
+    return this.initiallyExcludedPaths.has(relativePath.split(path.sep)[0]);
   }
 
   refresh(): void {
@@ -77,7 +77,6 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
     files.forEach(file => {
       const filePath = path.join(dir, file);
       const stat = fs.statSync(filePath);
-      const relativePath = path.relative(this.rootPath, filePath);
       const isChecked = this.checkedItems.has(filePath);
 
       if (stat.isDirectory()) {
@@ -91,12 +90,23 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
   }
 
   toggleChecked(item: FileTreeItem): void {
-    if (this.checkedItems.has(item.path)) {
-      this.checkedItems.delete(item.path);
-    } else {
-      this.checkedItems.add(item.path);
-    }
+    this.setCheckedRecursively(item.path, !this.checkedItems.has(item.path));
     this.refresh();
+  }
+
+  private setCheckedRecursively(itemPath: string, isChecked: boolean): void {
+    if (isChecked) {
+      this.checkedItems.add(itemPath);
+    } else {
+      this.checkedItems.delete(itemPath);
+    }
+
+    if (fs.statSync(itemPath).isDirectory()) {
+      fs.readdirSync(itemPath).forEach(file => {
+        const filePath = path.join(itemPath, file);
+        this.setCheckedRecursively(filePath, isChecked);
+      });
+    }
   }
 
   getCheckedItems(): Set<string> {
@@ -104,11 +114,17 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
   }
 
   setCheckedItem(path: string, isChecked: boolean): void {
-    if (isChecked) {
-      this.checkedItems.add(path);
-    } else {
-      this.checkedItems.delete(path);
+    this.setCheckedRecursively(path, isChecked);
+  }
+
+  isItemChecked(itemPath: string): boolean {
+    while (itemPath !== this.rootPath) {
+      if (this.checkedItems.has(itemPath)) {
+        return true;
+      }
+      itemPath = path.dirname(itemPath);
     }
+    return false;
   }
 }
 
@@ -179,42 +195,36 @@ export function activate(context: vscode.ExtensionContext) {
 
 async function getSelectedFilesContent(treeDataProvider: FileTreeDataProvider, rootPath: string, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<string> {
   let allContent = '';
-  const checkedItems = treeDataProvider.getCheckedItems();
 
   const copyFile = (filePath: string, relativePath: string) => {
-      try {
-          const content = fs.readFileSync(filePath, 'utf-8');
-          allContent += `\n--- File: ${relativePath} ---\n`;
-          allContent += content + '\n';
-          progress.report({ message: `Processing: ${relativePath}` });
-      } catch (error) {
-          console.error(`Error reading file ${filePath}:`, error);
-      }
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      allContent += `\n--- File: ${relativePath} ---\n`;
+      allContent += content + '\n';
+      progress.report({ message: `Processing: ${relativePath}` });
+    } catch (error) {
+      console.error(`Error reading file ${filePath}:`, error);
+    }
   };
 
   const processCheckedItems = (itemPath: string) => {
-      const relativePath = path.relative(rootPath, itemPath);
-      if (fs.statSync(itemPath).isDirectory()) {
-          const files = fs.readdirSync(itemPath);
-          files.forEach(file => {
-              const filePath = path.join(itemPath, file);
-              const fileRelativePath = path.join(relativePath, file);
-              if (fs.statSync(filePath).isDirectory()) {
-                  if (checkedItems.has(filePath)) {
-                      processCheckedItems(filePath);
-                  }
-              } else {
-                  if (checkedItems.has(filePath)) {
-                      copyFile(filePath, fileRelativePath);
-                  }
-              }
-          });
-      } else {
-          copyFile(itemPath, relativePath);
+    const relativePath = path.relative(rootPath, itemPath);
+    const stat = fs.statSync(itemPath);
+
+    if (stat.isFile()) {
+      if (treeDataProvider.isItemChecked(itemPath)) {
+        copyFile(itemPath, relativePath);
       }
+    } else if (stat.isDirectory()) {
+      fs.readdirSync(itemPath).forEach(file => {
+        const filePath = path.join(itemPath, file);
+        processCheckedItems(filePath);
+      });
+    }
   };
 
-  checkedItems.forEach(processCheckedItems);
+  processCheckedItems(rootPath);
+
   return allContent;
 }
 
