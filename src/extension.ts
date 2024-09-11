@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { initiallyExcludedPaths, nonTextExtensions } from './excludedPaths';
 
+// Represents an item in the file tree
 class FileTreeItem extends vscode.TreeItem {
     constructor(
         public readonly label: string,
@@ -11,33 +13,37 @@ class FileTreeItem extends vscode.TreeItem {
     ) {
         super(label, collapsibleState);
         this.checkboxState = isChecked ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
+        this.tooltip = path; 
+        this.iconPath = this.getIcon(); 
+    }
+
+    // Set appropriate icon based on file type
+    private getIcon(): { light: string; dark: string } | vscode.ThemeIcon {
+        if (this.collapsibleState === vscode.TreeItemCollapsibleState.None) {
+            return new vscode.ThemeIcon("file");
+        } else {
+            return new vscode.ThemeIcon("folder");
+        }
     }
 }
 
+// Manages the file tree data and operations
 class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<FileTreeItem | undefined | null | void> = new vscode.EventEmitter<FileTreeItem | undefined | null | void>();
     readonly onDidChangeTreeData: vscode.Event<FileTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
     private rootPath: string;
     private checkedItems: Set<string> = new Set();
-    private initiallyExcludedPaths: Set<string> = new Set([
-        'node_modules',
-        '.env',
-        '.git',
-        '.vscode',
-        'dist',
-        'build',
-        '.DS_Store'
-    ]);
     private fileWatcher: vscode.FileSystemWatcher;
 
-    constructor(rootPath: string, context: vscode.ExtensionContext) {
+    constructor(rootPath: string, private context: vscode.ExtensionContext) {
         this.rootPath = rootPath;
-        this.loadCheckedItems(context);
+        this.loadCheckedItems();
         this.initializeCheckedItems(this.rootPath);
         this.fileWatcher = this.setupFileWatcher();
     }
 
+    // Set up file watcher to refresh tree on file system changes
     private setupFileWatcher(): vscode.FileSystemWatcher {
         const watcher = vscode.workspace.createFileSystemWatcher('**/*');
         watcher.onDidCreate(() => this.refresh());
@@ -46,15 +52,18 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
         return watcher;
     }
 
-    private loadCheckedItems(context: vscode.ExtensionContext) {
-        const storedItems = context.workspaceState.get<string[]>('checkedItems', []);
+    // Load previously checked items from workspace state
+    private loadCheckedItems() {
+        const storedItems = this.context.workspaceState.get<string[]>('checkedItems', []);
         this.checkedItems = new Set(storedItems);
     }
 
-    private saveCheckedItems(context: vscode.ExtensionContext) {
-        context.workspaceState.update('checkedItems', Array.from(this.checkedItems));
+    // Save checked items to workspace state
+    private saveCheckedItems() {
+        this.context.workspaceState.update('checkedItems', Array.from(this.checkedItems));
     }
 
+    // Initialize checked items based on excluded paths and non-text files
     private initializeCheckedItems(dir: string) {
         const files = fs.readdirSync(dir);
         files.forEach(file => {
@@ -62,7 +71,7 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
             const stat = fs.statSync(filePath);
             const relativePath = path.relative(this.rootPath, filePath);
 
-            if (!this.isInitiallyExcludedPath(relativePath)) {
+            if (!this.isExcludedPath(relativePath)) {
                 if (stat.isDirectory()) {
                     this.initializeCheckedItems(filePath);
                     if (this.areAllChildrenChecked(filePath)) {
@@ -75,6 +84,7 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
         });
     }
 
+    // Check if all children of a directory are checked
     private areAllChildrenChecked(dir: string): boolean {
         const files = fs.readdirSync(dir);
         return files.every(file => {
@@ -87,15 +97,17 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
         });
     }
 
-    private isInitiallyExcludedPath(relativePath: string): boolean {
-        return this.initiallyExcludedPaths.has(relativePath.split(path.sep)[0]);
+    // Check if a path is in the excluded list
+    private isExcludedPath(relativePath: string): boolean {
+        return initiallyExcludedPaths.has(relativePath.split(path.sep)[0]);
     }
 
+    // Check if a file is a non-text file based on its extension
     private isNonTextFile(filePath: string): boolean {
-        const nonTextExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.mp4', '.avi', '.mov', '.wmv', '.mp3', '.wav', '.zip', '.rar', '.exe', '.dll'];
         return nonTextExtensions.includes(path.extname(filePath).toLowerCase());
     }
 
+    // Refresh the tree view
     refresh(): void {
         this._onDidChangeTreeData.fire();
     }
@@ -111,6 +123,7 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
         return Promise.resolve(this.getFileTree(element.path));
     }
 
+    // Get the file tree for a given directory
     private getFileTree(dir: string): FileTreeItem[] {
         const items: FileTreeItem[] = [];
         const files = fs.readdirSync(dir);
@@ -130,14 +143,16 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
         return items;
     }
 
-    toggleChecked(item: FileTreeItem, context: vscode.ExtensionContext): void {
+    // Toggle the checked state of an item
+    toggleChecked(item: FileTreeItem): void {
         const newState = !this.isItemChecked(item.path);
         this.setCheckedRecursively(item.path, newState);
         this.updateParentState(path.dirname(item.path));
-        this.saveCheckedItems(context);
+        this.saveCheckedItems();
         this.refresh();
     }
 
+    // Set the checked state recursively for a directory
     private setCheckedRecursively(itemPath: string, isChecked: boolean): void {
         const stat = fs.statSync(itemPath);
         
@@ -161,6 +176,7 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
         }
     }
 
+    // Update the state of parent directories
     private updateParentState(parentPath: string): void {
         if (parentPath === this.rootPath || parentPath === path.dirname(parentPath)) {
             return;
@@ -191,8 +207,9 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
     }
 }
 
+// Activate the extension
 export function activate(context: vscode.ExtensionContext) {
-    console.log('Congratulations, your extension "llm-context" is now active!');
+    console.log('LLM Context extension is now active!');
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
@@ -216,30 +233,34 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider.refresh();
     });
 
+    // Register command to copy selected files
     let copyDisposable = vscode.commands.registerCommand('llm-context.copySelectedFiles', async () => {
-        vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: "Copying selected files...",
-            cancellable: false
-        }, async (progress) => {
-            const allContent = await getSelectedFilesContent(treeDataProvider, rootPath, progress);
-            try {
-                await vscode.env.clipboard.writeText(allContent);
-                vscode.window.showInformationMessage('Selected files have been successfully copied to the clipboard!');
-            } catch (error) {
-                vscode.window.showErrorMessage('Error copying to clipboard: ' + error);
-            }
-        });
+        await handleSelectedFiles(treeDataProvider, rootPath, 'copy');
     });
 
+    // Register command to download selected files
     let downloadDisposable = vscode.commands.registerCommand('llm-context.downloadSelectedFiles', async () => {
-        vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: "Preparing selected files for download...",
-            cancellable: false
-        }, async (progress) => {
-            const allContent = await getSelectedFilesContent(treeDataProvider, rootPath, progress);
-            try {
+        await handleSelectedFiles(treeDataProvider, rootPath, 'download');
+    });
+
+    context.subscriptions.push(copyDisposable, downloadDisposable);
+}
+
+// Handle selected files for copy or download
+async function handleSelectedFiles(treeDataProvider: FileTreeDataProvider, rootPath: string, action: 'copy' | 'download') {
+    const progressOptions = {
+        location: vscode.ProgressLocation.Notification,
+        title: action === 'copy' ? "Copying selected files..." : "Preparing selected files for download...",
+        cancellable: false
+    };
+
+    vscode.window.withProgress(progressOptions, async (progress) => {
+        const allContent = await getSelectedFilesContent(treeDataProvider, rootPath, progress);
+        try {
+            if (action === 'copy') {
+                await vscode.env.clipboard.writeText(allContent);
+                vscode.window.showInformationMessage('Selected files have been successfully copied to the clipboard!');
+            } else {
                 const saveUri = await vscode.window.showSaveDialog({
                     defaultUri: vscode.Uri.file('selected_files.txt'),
                     filters: { 'Text files': ['txt'] }
@@ -248,15 +269,14 @@ export function activate(context: vscode.ExtensionContext) {
                     fs.writeFileSync(saveUri.fsPath, allContent);
                     vscode.window.showInformationMessage('Selected files have been successfully downloaded!');
                 }
-            } catch (error) {
-                vscode.window.showErrorMessage('Error downloading files: ' + error);
             }
-        });
+        } catch (error) {
+            vscode.window.showErrorMessage(`Error ${action === 'copy' ? 'copying to clipboard' : 'downloading files'}: ${error}`);
+        }
     });
-
-    context.subscriptions.push(copyDisposable, downloadDisposable);
 }
 
+// Get content of selected files
 async function getSelectedFilesContent(treeDataProvider: FileTreeDataProvider, rootPath: string, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<string> {
     let allContent = '';
 
@@ -292,4 +312,7 @@ async function getSelectedFilesContent(treeDataProvider: FileTreeDataProvider, r
     return allContent;
 }
 
-export function deactivate() {}
+// Deactivate the extension
+export function deactivate() {
+    console.log('LLM Context extension is now deactivated.');
+}

@@ -1,6 +1,6 @@
 {
-  "name": "llm-context",
-  "displayName": "LLM Context",
+  "name": "code-context-for-ai",
+  "displayName": "CodeContextForAI",
   "description": "Copy or download selected files for LLM context",
   "version": "0.0.2",
   "engines": {
