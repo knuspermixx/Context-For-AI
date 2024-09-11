@@ -1,0 +1,79 @@
+{
+  "name": "llm-context",
+  "displayName": "LLM Context",
+  "description": "Copy or download selected files for LLM context",
+  "version": "0.0.2",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "llm-context.copySelectedFiles",
+        "title": "Copy Selected Files"
+      },
+      {
+        "command": "llm-context.downloadSelectedFiles",
+        "title": "Download Selected Files"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "llm-context-container",
+          "title": "LLM Context",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "llm-context-container": [
+        {
+          "id": "llmContextView",
+          "name": "File Selection",
+          "type": "tree",
+          "checkbox": true
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "llm-context.copySelectedFiles",
+          "when": "view == llmContextView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "llm-context.downloadSelectedFiles",
+          "when": "view == llmContextView",
+          "group": "navigation@2"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.93.0",
+    "@typescript-eslint/eslint-plugin": "^5.56.0",
+    "@typescript-eslint/parser": "^5.56.0",
+    "@vscode/test-electron": "^2.3.0",
+    "eslint": "^8.36.0",
+    "glob": "^8.1.0",
+    "mocha": "^10.2.0",
+    "typescript": "^5.6.2"
+  }
+}
