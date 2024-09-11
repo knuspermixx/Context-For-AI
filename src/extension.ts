@@ -15,36 +15,36 @@ class FileTreeItem extends vscode.TreeItem {
 }
 
 class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
-  private _onDidChangeTreeData: vscode.EventEmitter<FileTreeItem | undefined | null | void> = new vscode.EventEmitter<FileTreeItem | undefined | null | void>();
-  readonly onDidChangeTreeData: vscode.Event<FileTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+    private _onDidChangeTreeData: vscode.EventEmitter<FileTreeItem | undefined | null | void> = new vscode.EventEmitter<FileTreeItem | undefined | null | void>();
+    readonly onDidChangeTreeData: vscode.Event<FileTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
-  private rootPath: string;
-  private checkedItems: Set<string> = new Set();
-  private initiallyExcludedPaths: Set<string> = new Set([
-      'node_modules',
-      '.env',
-      '.git',
-      '.vscode',
-      'dist',
-      'build',
-      '.DS_Store'
-  ]);
-  private fileWatcher: vscode.FileSystemWatcher;
+    private rootPath: string;
+    private checkedItems: Set<string> = new Set();
+    private initiallyExcludedPaths: Set<string> = new Set([
+        'node_modules',
+        '.env',
+        '.git',
+        '.vscode',
+        'dist',
+        'build',
+        '.DS_Store'
+    ]);
+    private fileWatcher: vscode.FileSystemWatcher;
 
-  constructor(rootPath: string, context: vscode.ExtensionContext) {
-      this.rootPath = rootPath;
-      this.loadCheckedItems(context);
-      this.initializeCheckedItems(this.rootPath);
-      this.fileWatcher = this.setupFileWatcher();
-  }
+    constructor(rootPath: string, context: vscode.ExtensionContext) {
+        this.rootPath = rootPath;
+        this.loadCheckedItems(context);
+        this.initializeCheckedItems(this.rootPath);
+        this.fileWatcher = this.setupFileWatcher();
+    }
 
-  private setupFileWatcher(): vscode.FileSystemWatcher {
-      const watcher = vscode.workspace.createFileSystemWatcher('**/*');
-      watcher.onDidCreate(() => this.refresh());
-      watcher.onDidDelete(() => this.refresh());
-      watcher.onDidChange(() => this.refresh());
-      return watcher;
-  }
+    private setupFileWatcher(): vscode.FileSystemWatcher {
+        const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+        watcher.onDidCreate(() => this.refresh());
+        watcher.onDidDelete(() => this.refresh());
+        watcher.onDidChange(() => this.refresh());
+        return watcher;
+    }
 
     private loadCheckedItems(context: vscode.ExtensionContext) {
         const storedItems = context.workspaceState.get<string[]>('checkedItems', []);
@@ -62,14 +62,28 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
             const stat = fs.statSync(filePath);
             const relativePath = path.relative(this.rootPath, filePath);
 
-            if (!this.isInitiallyExcludedPath(relativePath) && !this.isNonTextFile(filePath)) {
-                if (!this.checkedItems.has(filePath)) {
-                    this.checkedItems.add(filePath);
-                }
+            if (!this.isInitiallyExcludedPath(relativePath)) {
                 if (stat.isDirectory()) {
                     this.initializeCheckedItems(filePath);
+                    if (this.areAllChildrenChecked(filePath)) {
+                        this.checkedItems.add(filePath);
+                    }
+                } else if (!this.isNonTextFile(filePath)) {
+                    this.checkedItems.add(filePath);
                 }
             }
+        });
+    }
+
+    private areAllChildrenChecked(dir: string): boolean {
+        const files = fs.readdirSync(dir);
+        return files.every(file => {
+            const filePath = path.join(dir, file);
+            const stat = fs.statSync(filePath);
+            if (stat.isDirectory()) {
+                return this.areAllChildrenChecked(filePath);
+            }
+            return this.checkedItems.has(filePath);
         });
     }
 
@@ -78,7 +92,7 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
     }
 
     private isNonTextFile(filePath: string): boolean {
-        const nonTextExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.mp4', '.avi', '.mov', '.wmv'];
+        const nonTextExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.mp4', '.avi', '.mov', '.wmv', '.mp3', '.wav', '.zip', '.rar', '.exe', '.dll'];
         return nonTextExtensions.includes(path.extname(filePath).toLowerCase());
     }
 
@@ -108,7 +122,7 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
 
             if (stat.isDirectory()) {
                 items.push(new FileTreeItem(file, vscode.TreeItemCollapsibleState.Collapsed, filePath, isChecked));
-            } else if (!this.isNonTextFile(filePath)) {
+            } else {
                 items.push(new FileTreeItem(file, vscode.TreeItemCollapsibleState.None, filePath, isChecked));
             }
         });
@@ -117,44 +131,63 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
     }
 
     toggleChecked(item: FileTreeItem, context: vscode.ExtensionContext): void {
-        this.setCheckedRecursively(item.path, !this.checkedItems.has(item.path));
+        const newState = !this.isItemChecked(item.path);
+        this.setCheckedRecursively(item.path, newState);
+        this.updateParentState(path.dirname(item.path));
         this.saveCheckedItems(context);
         this.refresh();
     }
 
     private setCheckedRecursively(itemPath: string, isChecked: boolean): void {
-        if (isChecked) {
-            this.checkedItems.add(itemPath);
-        } else {
-            this.checkedItems.delete(itemPath);
-        }
-
-        if (fs.statSync(itemPath).isDirectory()) {
+        const stat = fs.statSync(itemPath);
+        
+        if (stat.isDirectory()) {
+            if (isChecked) {
+                this.checkedItems.add(itemPath);
+            } else {
+                this.checkedItems.delete(itemPath);
+            }
+            
             fs.readdirSync(itemPath).forEach(file => {
                 const filePath = path.join(itemPath, file);
-                if (!this.isNonTextFile(filePath)) {
-                    this.setCheckedRecursively(filePath, isChecked);
-                }
+                this.setCheckedRecursively(filePath, isChecked);
             });
+        } else {
+            if (isChecked) {
+                this.checkedItems.add(itemPath);
+            } else {
+                this.checkedItems.delete(itemPath);
+            }
         }
+    }
+
+    private updateParentState(parentPath: string): void {
+        if (parentPath === this.rootPath || parentPath === path.dirname(parentPath)) {
+            return;
+        }
+
+        const allChildrenChecked = this.areAllChildrenChecked(parentPath);
+        
+        if (allChildrenChecked) {
+            this.checkedItems.add(parentPath);
+        } else {
+            this.checkedItems.delete(parentPath);
+        }
+
+        this.updateParentState(path.dirname(parentPath));
     }
 
     getCheckedItems(): Set<string> {
         return this.checkedItems;
     }
 
-    setCheckedItem(path: string, isChecked: boolean): void {
-        this.setCheckedRecursively(path, isChecked);
+    setCheckedItem(itemPath: string, isChecked: boolean): void {
+        this.setCheckedRecursively(itemPath, isChecked);
+        this.updateParentState(path.dirname(itemPath));
     }
 
     isItemChecked(itemPath: string): boolean {
-        while (itemPath !== this.rootPath) {
-            if (this.checkedItems.has(itemPath)) {
-                return true;
-            }
-            itemPath = path.dirname(itemPath);
-        }
-        return false;
+        return this.checkedItems.has(itemPath);
     }
 }
 
@@ -174,10 +207,8 @@ export function activate(context: vscode.ExtensionContext) {
         canSelectMany: true
     });
 
-    // Add description to the tree view
     treeView.description = "Select files/folders for LLM context";
 
-    // Handle checkbox state changes
     treeView.onDidChangeCheckboxState((event) => {
         event.items.forEach(([item, state]) => {
             treeDataProvider.setCheckedItem(item.path, state === vscode.TreeItemCheckboxState.Checked);
