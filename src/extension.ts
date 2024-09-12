@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { initiallyExcludedPaths, nonTextExtensions } from './excludedPaths';
+import { initiallyExcludedPaths, nonTextExtensions, isNonTextFile, shouldExcludePath } from './excludedPaths';
 
 // Represents an item in the file tree
 class FileTreeItem extends vscode.TreeItem {
@@ -9,12 +9,14 @@ class FileTreeItem extends vscode.TreeItem {
         public readonly label: string,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
         public readonly path: string,
-        public isChecked: boolean = false
+        public isChecked: boolean = false,
+        public selectedFileCount: number = 0
     ) {
         super(label, collapsibleState);
         this.checkboxState = isChecked ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
         this.tooltip = path; 
-        this.iconPath = this.getIcon(); 
+        this.iconPath = this.getIcon();
+        this.description = this.getDescription();
     }
 
     // Set appropriate icon based on file type
@@ -24,6 +26,14 @@ class FileTreeItem extends vscode.TreeItem {
         } else {
             return new vscode.ThemeIcon("folder");
         }
+    }
+
+    // Get description (selected file count for directories)
+    private getDescription(): string {
+        if (this.collapsibleState !== vscode.TreeItemCollapsibleState.None && this.selectedFileCount > 0) {
+            return `${this.selectedFileCount} selected files`;
+        }
+        return '';
     }
 }
 
@@ -99,12 +109,12 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
 
     // Check if a path is in the excluded list
     private isExcludedPath(relativePath: string): boolean {
-        return initiallyExcludedPaths.has(relativePath.split(path.sep)[0]);
+        return shouldExcludePath(relativePath);
     }
-
+    
     // Check if a file is a non-text file based on its extension
     private isNonTextFile(filePath: string): boolean {
-        return nonTextExtensions.includes(path.extname(filePath).toLowerCase());
+        return isNonTextFile(filePath);
     }
 
     // Refresh the tree view
@@ -131,10 +141,11 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
         files.forEach(file => {
             const filePath = path.join(dir, file);
             const stat = fs.statSync(filePath);
-            const isChecked = this.checkedItems.has(filePath);
+            const isChecked = this.isItemChecked(filePath);
+            const selectedFileCount = stat.isDirectory() ? this.getSelectedFileCount(filePath) : 0;
 
             if (stat.isDirectory()) {
-                items.push(new FileTreeItem(file, vscode.TreeItemCollapsibleState.Collapsed, filePath, isChecked));
+                items.push(new FileTreeItem(file, vscode.TreeItemCollapsibleState.Collapsed, filePath, isChecked, selectedFileCount));
             } else {
                 items.push(new FileTreeItem(file, vscode.TreeItemCollapsibleState.None, filePath, isChecked));
             }
@@ -143,73 +154,97 @@ class FileTreeDataProvider implements vscode.TreeDataProvider<FileTreeItem> {
         return items;
     }
 
-    // Toggle the checked state of an item
+    // Get the count of selected files in a directory
+    private getSelectedFileCount(dirPath: string): number {
+        let count = 0;
+        const files = fs.readdirSync(dirPath);
+
+        files.forEach(file => {
+            const filePath = path.join(dirPath, file);
+            const stat = fs.statSync(filePath);
+
+            if (stat.isDirectory()) {
+                count += this.getSelectedFileCount(filePath);
+            } else if (this.isItemChecked(filePath)) {
+                count++;
+            }
+        });
+
+        return count;
+    }
+
     toggleChecked(item: FileTreeItem): void {
         const newState = !this.isItemChecked(item.path);
-        this.setCheckedRecursively(item.path, newState);
-        this.updateParentState(path.dirname(item.path));
-        this.saveCheckedItems();
+        this.setCheckedItem(item.path, newState);
         this.refresh();
     }
 
-    // Set the checked state recursively for a directory
-    private setCheckedRecursively(itemPath: string, isChecked: boolean): void {
-        const stat = fs.statSync(itemPath);
-        
-        if (stat.isDirectory()) {
-            if (isChecked) {
-                this.checkedItems.add(itemPath);
-            } else {
-                this.checkedItems.delete(itemPath);
-            }
-            
-            fs.readdirSync(itemPath).forEach(file => {
-                const filePath = path.join(itemPath, file);
-                this.setCheckedRecursively(filePath, isChecked);
-            });
+    setCheckedItem(itemPath: string, isChecked: boolean): void {
+        if (isChecked) {
+            this.checkedItems.add(itemPath);
         } else {
-            if (isChecked) {
-                this.checkedItems.add(itemPath);
-            } else {
-                this.checkedItems.delete(itemPath);
-            }
+            this.checkedItems.delete(itemPath);
         }
+        this.updateParentState(path.dirname(itemPath));
+        this.saveCheckedItems();
     }
 
-    // Update the state of parent directories
     private updateParentState(parentPath: string): void {
         if (parentPath === this.rootPath || parentPath === path.dirname(parentPath)) {
             return;
         }
 
-        const allChildrenChecked = this.areAllChildrenChecked(parentPath);
-        
-        if (allChildrenChecked) {
+        const children = fs.readdirSync(parentPath);
+        const checkedChildren = children.filter(child => 
+            this.isItemChecked(path.join(parentPath, child))
+        );
+
+        if (checkedChildren.length === children.length) {
             this.checkedItems.add(parentPath);
-        } else {
+        } else if (checkedChildren.length === 0) {
             this.checkedItems.delete(parentPath);
         }
+        // If some, but not all, children are selected, don't change the parent directory's state
 
         this.updateParentState(path.dirname(parentPath));
+    }
+
+    isItemChecked(itemPath: string): boolean {
+        if (this.checkedItems.has(itemPath)) {
+            return true;
+        }
+        // Check if a parent folder is selected
+        let parent = path.dirname(itemPath);
+        while (parent !== this.rootPath && parent !== path.dirname(parent)) {
+            if (this.checkedItems.has(parent)) {
+                return true;
+            }
+            parent = path.dirname(parent);
+        }
+        return false;
     }
 
     getCheckedItems(): Set<string> {
         return this.checkedItems;
     }
 
-    setCheckedItem(itemPath: string, isChecked: boolean): void {
-        this.setCheckedRecursively(itemPath, isChecked);
-        this.updateParentState(path.dirname(itemPath));
+    resetToDefault(): void {
+        this.checkedItems.clear();
+        this.initializeCheckedItems(this.rootPath);
+        this.saveCheckedItems();
+        this.refresh();
     }
 
-    isItemChecked(itemPath: string): boolean {
-        return this.checkedItems.has(itemPath);
+    uncheckAll(): void {
+        this.checkedItems.clear();
+        this.saveCheckedItems();
+        this.refresh();
     }
 }
 
 // Activate the extension
 export function activate(context: vscode.ExtensionContext) {
-    console.log('LLM Context extension is now active!');
+    console.log('Context For AI extension is now active!');
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
@@ -224,7 +259,7 @@ export function activate(context: vscode.ExtensionContext) {
         canSelectMany: true
     });
 
-    treeView.description = "Select files/folders for LLM context";
+    treeView.description = "Select files/folders for Context For AI";
 
     treeView.onDidChangeCheckboxState((event) => {
         event.items.forEach(([item, state]) => {
@@ -243,7 +278,17 @@ export function activate(context: vscode.ExtensionContext) {
         await handleSelectedFiles(treeDataProvider, rootPath, 'download');
     });
 
-    context.subscriptions.push(copyDisposable, downloadDisposable);
+    // Register command to reset to default selection
+    let resetToDefaultDisposable = vscode.commands.registerCommand('llm-context.resetToDefault', () => {
+        treeDataProvider.resetToDefault();
+    });
+
+    // Register command to uncheck all items
+    let uncheckAllDisposable = vscode.commands.registerCommand('llm-context.uncheckAll', () => {
+        treeDataProvider.uncheckAll();
+    });
+
+    context.subscriptions.push(copyDisposable, downloadDisposable, resetToDefaultDisposable, uncheckAllDisposable);
 }
 
 // Handle selected files for copy or download
@@ -314,5 +359,5 @@ async function getSelectedFilesContent(treeDataProvider: FileTreeDataProvider, r
 
 // Deactivate the extension
 export function deactivate() {
-    console.log('LLM Context extension is now deactivated.');
+    console.log('Context For AI extension is now deactivated.');
 }

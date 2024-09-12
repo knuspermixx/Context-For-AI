@@ -1,32 +1,43 @@
 {
-  "name": "code-context-for-ai",
-  "displayName": "CodeContextForAI",
-  "description": "Copy or download selected files for LLM context",
-  "version": "0.0.2",
+  "name": "context-for-ai",
+  "displayName": "Context For AI",
+  "description": "Copy or download Context For AI",
+  "version": "0.0.3",
   "engines": {
     "vscode": "^1.93.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "llm-context.copySelectedFiles",
-        "title": "Copy Selected Files"
+        "title": "Copy Selected Files",
+        "icon": "$(copy)"
       },
       {
         "command": "llm-context.downloadSelectedFiles",
-        "title": "Download Selected Files"
+        "title": "Download Selected Files",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "llm-context.resetToDefault",
+        "title": "Reset to Default Selection",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "llm-context.uncheckAll",
+        "title": "Uncheck All",
+        "icon": "$(clear-all)"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
           "id": "llm-context-container",
-          "title": "LLM Context",
+          "title": "Context For AI",
           "icon": "resources/icon.svg"
         }
       ]
@@ -36,8 +47,7 @@
         {
           "id": "llmContextView",
           "name": "File Selection",
-          "type": "tree",
-          "checkbox": true
+          "type": "tree"
         }
       ]
     },
@@ -52,6 +62,16 @@
           "command": "llm-context.downloadSelectedFiles",
           "when": "view == llmContextView",
           "group": "navigation@2"
+        },
+        {
+          "command": "llm-context.resetToDefault",
+          "when": "view == llmContextView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "llm-context.uncheckAll",
+          "when": "view == llmContextView",
+          "group": "navigation@4"
         }
       ]
     }
